@@ -12,7 +12,13 @@ if len(sys.argv) > 1 and '-v' in sys.argv:
 logging.basicConfig(level=loglevel, format='%(message)s')
 log = logging.getLogger('StochasticGame')
 
+
+############# Helper Classes #############
+
 class Event:
+    """
+    An Event is anything that happens in the game. It is logged to the console and stored in the event queue.
+    """
     def __init__(self, piece, msg, time, pieces, logger=log.debug):
         self.piece = piece
         self.msg = msg
@@ -25,8 +31,16 @@ class Event:
         return f"[{self.time:.2f}]: {self.object_type} {self.piece.id} {self.msg}"
     def __repr__(self):
         return f"[{self.time:.2f}]: {self.object_type} {self.piece.id} {self.msg}"
+    
+
+############# Piece Classes #############
 
 class Piece:
+    """
+    A Piece is an entity that exists on the game board.
+    Pieces which are targets can be hit by attacks and destroyed.
+    Pieces which are runnable are generators which can be scheduled to run and perform some action, such as moving.
+    """
     def __init__(self, id, posx, posy, game):
         self.id = id
         self.posx = posx
@@ -38,30 +52,39 @@ class Piece:
         self.target = False
     def get_pos(self):
         return (self.posx, self.posy)
-    def move(self, dx, dy):
-        self.posx += dx
-        self.posy += dy
+    
+    def run(self):
+        raise NotImplementedError
 
 class Target(Piece):
+    """
+    A Target is a piece that can be hit by attacks and destroyed, granting points.
+    """
     def __init__(self, id, posx, posy, game, points):
         super().__init__(id, posx, posy, game)
         self.points = points
         self.target = True
 
     def hit(self, attacker):
+        """
+        This function is called when the Target is hit by an attack.
+        """
         self.active = False
         self.game.event(self, f'destroyed by {type(attacker).__name__} {attacker.id}', level=logging.INFO)
         self.game.points += self.points
         log.debug(f'[{self.game.env.now:.2f}]: {self.points} points gained, {self.game.points}/{self.game.possible_points} possible points earned')
 
 class RWTarget(Target):
+    """
+    A RWTarget is a Target that moves around the map according to a random walk.
+    """
     def __init__(self, id, posx, posy, game, points, speed):
         super().__init__(id, posx, posy, game, points)
         self.points = points
         self.speed = speed
         self.runnable = True
     
-    def move(self):
+    def run(self):
         while self.active:
             try:
                 yield self.env.timeout(self.speed)
@@ -97,7 +120,7 @@ class Helicopter(Piece):
         self.speed = speed
         self.parent = parent
 
-    def move(self):
+    def run(self):
         while self.active:
             try:
                 yield self.env.timeout(self.speed)
@@ -115,7 +138,15 @@ class Helicopter(Piece):
             self.game.event(self, f'moved to ({self.posx}, {self.posy})')
             self.parent.earned_points += self.game.attack_pos(self, self.posx, self.posy)
 
+
+############# Facility Classes #############
+
 class Facility:
+    """
+    A Facility is a player-owned entitiy that performs some action, such as attacking positions or swpawinging player-owned pieces.
+    Facilities require resources. The more resources a facility has, the more frequently it will perform its action.
+    Facilities that have no resources are inactive and are not scheduled to run.
+    """
     def __init__(self, id, resources, game):
         self.id = id
         self.resources = resources
@@ -138,7 +169,7 @@ class Facility:
     
 class Artillery(Facility):
     """
-    The Artillery fires at targets according to a Poisson process. One resource buys an expecation of one shot per time.
+    The Artillery is a Facility that fires at targets according to a Poisson process. One resource buys an expecation of one shot per time.
     """
     def __init__(self, id, resources, game):
         super().__init__(id, resources, game)
@@ -161,7 +192,7 @@ class Artillery(Facility):
 
 class Helipad(Facility):
     """
-    The Helipad spawns Helicopters according to a Poisson process. One resource buys an expecation of one helicopter per 0.025 time.
+    The Helipad is a Facility that spawns Helicopters according to a Poisson process. One resource buys an expecation of one helicopter per 0.025 time.
     """
     def __init__(self, id, resources, game, alpha):
         super().__init__(id, resources, game)
@@ -185,7 +216,12 @@ class Helipad(Facility):
             self.game.event(self, f'spawned Helicopter {id} at ({posx}, {posy})', level=logging.INFO)
             
 
+############# GameEngine #############
+
 class GameEngine:
+    """
+    GameEngine is the main class responsible for running the game. It is responsible for managing the event queue, scheduling generators, and running the simulation.
+    """
     def __init__(self, size=100, resource_limit=100):
         self.env = simpy.Environment()
         self.event_queue = []
@@ -196,19 +232,31 @@ class GameEngine:
         return
     
     def setup(self, pieces, facilities):
+        """
+        Called before the game is run. This function sets up the game by adding the Pieces and Facilities to the game.
+        """
         self.points = 0
         self.pieces = pieces
         self.facilities = facilities
+        self.set_up = True
         return
     
     def add_piece(self, piece):
+        """
+        Adds a Piece to the game
+        """
         if piece.id in self.pieces:
             raise ValueError(f'Piece with id {piece.id} already exists')
         self.pieces[piece.id] = piece
         if piece.runnable:
-            self.piece_generators.append(self.env.process(piece.move()))
+            self.piece_generators.append(self.env.process(piece.run()))
 
     def run(self):
+        """
+        Start the simulation. This function schedules the Piece and Facility generators and runs the simulation until the game ends.
+        """
+        if not self.set_up:
+            raise RuntimeError("GameEngine.setup() must be called before GameEngine.run()")
         self.piece_generators = []
         self.facility_generators = []
         self.possible_points = 0
@@ -219,7 +267,7 @@ class GameEngine:
         print(f'Resources used: {total_cost}/{self.resource_limit}')
         for p in self.pieces:
             if self.pieces[p].runnable:
-                self.piece_generators.append(self.env.process(self.pieces[p].move()))
+                self.piece_generators.append(self.env.process(self.pieces[p].run()))
             if hasattr(self.pieces[p], 'points'):
                 self.possible_points += self.pieces[p].points
         for f in self.facilities:
@@ -234,44 +282,67 @@ class GameEngine:
                 f.print_stats()
 
     def endgame_check(self):
+        """
+        Ends the game if all Targets have been destroyed.
+        """
         while True:
-            active_piece = False
+            active_target = False
             yield self.env.timeout(1)
-            for p in self.pieces:
-                if self.pieces[p].active:
-                    active_piece = True
+            for p in self.pieces.values():
+                if p.target and p.active:
+                    active_target = True
                     break
-            if not active_piece:
-                log.info(f'[{self.env.now:.2f}] All pieces destroyed, ending game')
+            if not active_target:
+                log.info(f'[{self.env.now:.2f}] All targets destroyed, ending game')
                 for fg in self.facility_generators:
                     fg.interrupt()
+                for p in self.piece_generators:
+                    p.interrupt()
                 break
 
     def piece_snapshot(self):
+        """
+        Creates a snapshot of the current state of the game. This is used to log events.
+        """
         snap = {}
         for p in self.pieces:
             snap[p] = self.pieces[p].get_pos()
         return snap
 
     def event(self, obj, msg, level=logging.DEBUG):
+        """
+        Log an event to the console and the event queue.
+        """
         logger = log.debug if level == logging.DEBUG else log.info
         e = Event(obj, msg, self.env.now, self.piece_snapshot(), logger)
         self.event_queue.append(e)
         return
     
     def next_piece_id(self):
+        """
+        Get the next available piece ID.
+        """
         self.next_piece += 1
         return self.next_piece - 1
     
     def random_pos(self):
+        """
+        Returns a random position within the game board.
+        """
         return rand.randint(-self.size, self.size), rand.randint(-self.size, self.size)
     
     def wrap_pos(self, posx, posy):
+        """
+        Ensures that the position is within the game board. If it is not, it wraps it around the board (Pac-Man style).
+        """
         new_posx = ((posx + self.size) % (self.width) + self.width) % self.width - self.size
         new_posy = ((posy + self.size) % (self.width) + self.width) % self.width - self.size
         return new_posx, new_posy
     
     def attack_pos(self, attacker, posx, posy):
+        """
+        Check if a position is a target and if so, hit it.
+        """
         earned_points = 0
         for p in self.pieces:
             if self.pieces[p].posx == posx and self.pieces[p].posy == posy:
@@ -279,10 +350,13 @@ class GameEngine:
                     self.pieces[p].hit(attacker)
                     earned_points += self.pieces[p].points
         return earned_points
+    
+
+############# Main #############
 
 difficulty = input("How difficult do you want the game to be, on a scale of 1 to 5?\n> ")
 difficulty = int(difficulty) * 20
-game = GameEngine(difficulty, 25)
+game = GameEngine(difficulty, 50)
 facility_count = 2
 print(f"You have {game.resource_limit} resources to spend, split between {facility_count} facilities.")
 artillery_resources = input("How many resources do you want to spend on artillery?\n> ")
@@ -290,10 +364,10 @@ artillery_resources = int(artillery_resources)
 helipad_resources = input("How many resources do you want to spend on the helipad?\n> ")
 helipad_resources = int(helipad_resources)
 pieces = {}
-for i in range(1000, 1010):
+for i in range(100000, 100010):
     posx, posy = game.random_pos()
     pieces[i] = RWTarget(i, posx, posy, game, 5, i+1)
-for i in range(1010, 1060):
+for i in range(100010, 100060):
     posx, posy = game.random_pos()
     pieces[i] = Target(i, posx, posy, game, 1)
 facilities = {}
