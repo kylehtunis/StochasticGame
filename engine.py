@@ -222,8 +222,8 @@ class GameEngine:
     """
     GameEngine is the main class responsible for running the game. It is responsible for managing the event queue, scheduling generators, and running the simulation.
     """
-    def __init__(self, size=100, resource_limit=100):
-        self.env = simpy.Environment()
+    def __init__(self, size=100, resource_limit=100, real_time=False):
+        self.env = simpy.rt.RealtimeEnvironment(strict=False) if real_time else simpy.Environment()
         self.event_queue = []
         self.size = size
         self.width = size * 2
@@ -354,9 +354,14 @@ class GameEngine:
 
 ############# Main #############
 
+rt = False
+if len(sys.argv) > 1 and '-rt' in sys.argv:
+    rt = True
+    print("Realtime simulation enabled")
+
 difficulty = input("How difficult do you want the game to be, on a scale of 1 to 5?\n> ")
 difficulty = int(difficulty) * 20
-game = GameEngine(difficulty, 50)
+game = GameEngine(difficulty, 50, rt)
 facility_count = 2
 print(f"You have {game.resource_limit} resources to spend, split between {facility_count} facilities.")
 artillery_resources = input("How many resources do you want to spend on artillery?\n> ")
