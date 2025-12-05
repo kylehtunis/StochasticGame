@@ -4,17 +4,18 @@ import numpy.random as rand
 import logging
 import copy
 
-logging.basicConfig(level=logging.DEBUG, format='%(message)s')
+logging.basicConfig(level=logging.INFO, format='%(message)s')
 log = logging.getLogger('StochasticGame')
 
 class Event:
-    def __init__(self, piece, msg, time, pieces):
+    def __init__(self, piece, msg, time, pieces, logger=log.debug):
         self.piece = piece
         self.msg = msg
         self.time = time
         self.pieces = pieces
         self.object_type = type(self.piece).__name__
-        log.debug(f'[{self.time:.2f}]: {self.object_type} {self.piece.id} {self.msg}')
+        output = f'[{self.time:.2f}]: {self.object_type} {self.piece.id} {self.msg}'
+        logger(output)
     def __str__(self):
         return f"[{self.time:.2f}]: {self.object_type} {self.piece.id} {self.msg}"
     def __repr__(self):
@@ -44,7 +45,7 @@ class Target(Piece):
 
     def hit(self, attacker):
         self.active = False
-        self.game.event(self, f'destroyed by {type(attacker).__name__} {attacker.id}')
+        self.game.event(self, f'destroyed by {type(attacker).__name__} {attacker.id}', level=logging.INFO)
         self.game.points += self.points
         log.debug(f'[{self.game.env.now:.2f}]: {self.points} points gained, {self.game.points}/{self.game.possible_points} possible points earned')
 
@@ -124,7 +125,7 @@ class Facility:
         raise NotImplementedError
     
     def print_stats(self):
-        log.info(f'{type(self).__name__} {self.id} earned {self.earned_points} points')
+        log.info(f'{type(self).__name__} {self.id} earned {self.earned_points} points ({self.earned_points/self.resources} per resource)')
 
     def active(self):
         return self.resources > 0
@@ -176,10 +177,7 @@ class Helipad(Facility):
             id = self.game.next_piece_id()
             h = Helicopter(id, posx, posy, self.game, self.alpha, 1, self)
             self.game.add_piece(h)
-            self.game.event(self, f'spawned Helicopter {id} at ({posx}, {posy})')
-
-    def resource_cost(self):
-        return self.rate * 20
+            self.game.event(self, f'spawned Helicopter {id} at ({posx}, {posy})', level=logging.INFO)
             
 
 class GameEngine:
@@ -189,6 +187,7 @@ class GameEngine:
         self.size = size
         self.width = size * 2
         self.resource_limit = resource_limit
+        self.next_piece = 1
         return
     
     def setup(self, pieces, facilities):
@@ -209,7 +208,7 @@ class GameEngine:
         self.facility_generators = []
         self.possible_points = 0
         total_cost = 0
-        total_cost = sum(f.resource_cost() for f in self.facilities.values())
+        total_cost = sum(f.resources for f in self.facilities.values())
         if total_cost > self.resource_limit:
             raise ValueError(f'Total resource cost ({total_cost}) exceeds resource limit ({self.resource_limit})')
         print(f'Resources used: {total_cost}/{self.resource_limit}')
@@ -248,13 +247,15 @@ class GameEngine:
             snap[p] = self.pieces[p].get_pos()
         return snap
 
-    def event(self, obj, msg):
-        e = Event(obj, msg, self.env.now, self.piece_snapshot())
+    def event(self, obj, msg, level=logging.DEBUG):
+        logger = log.debug if level == logging.DEBUG else log.info
+        e = Event(obj, msg, self.env.now, self.piece_snapshot(), logger)
         self.event_queue.append(e)
         return
     
     def next_piece_id(self):
-        return len(self.pieces) + 1
+        self.next_piece += 1
+        return self.next_piece - 1
     
     def random_pos(self):
         return rand.randint(-self.size, self.size), rand.randint(-self.size, self.size)
@@ -273,17 +274,20 @@ class GameEngine:
                     earned_points += self.pieces[p].points
         return earned_points
 
-game = GameEngine(50, 20)
-print(f"You have {game.resource_limit} resources to spend.")
+difficulty = input("How difficult do you want the game to be, on a scale of 1 to 5?\n> ")
+difficulty = int(difficulty) * 20
+game = GameEngine(difficulty, 25)
+facility_count = 2
+print(f"You have {game.resource_limit} resources to spend, split between {facility_count} facilities.")
 artillery_resources = input("How many resources do you want to spend on artillery?\n> ")
 artillery_resources = int(artillery_resources)
 helipad_resources = input("How many resources do you want to spend on the helipad?\n> ")
 helipad_resources = int(helipad_resources)
 pieces = {}
-for i in range(5):
+for i in range(1000, 1010):
     posx, posy = game.random_pos()
-    pieces[i] = RWTarget(i, posx, posy, game, 3*(i+1), i+1)
-for i in range(5, 10):
+    pieces[i] = RWTarget(i, posx, posy, game, 5, i+1)
+for i in range(1010, 1060):
     posx, posy = game.random_pos()
     pieces[i] = Target(i, posx, posy, game, 1)
 facilities = {}
