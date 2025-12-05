@@ -2,9 +2,14 @@ import simpy
 import numpy as np
 import numpy.random as rand
 import logging
-import copy
+import sys
 
-logging.basicConfig(level=logging.INFO, format='%(message)s')
+loglevel = logging.INFO
+if len(sys.argv) > 1 and '-v' in sys.argv:
+    loglevel = logging.DEBUG
+    print("Verbose logging enabled")
+
+logging.basicConfig(level=loglevel, format='%(message)s')
 log = logging.getLogger('StochasticGame')
 
 class Event:
@@ -224,8 +229,9 @@ class GameEngine:
         log.info(f'Game starting! Total possible points: {self.possible_points}')
         self.env.run(until=100)
         log.info(f'Game ended! Points: {self.points}/{self.possible_points}')
-        for f in self.facilities:
-            self.facilities[f].print_stats()
+        for f in self.facilities.values():
+            if f.active():
+                f.print_stats()
 
     def endgame_check(self):
         while True:
