@@ -186,6 +186,12 @@ class Artillery(Facility):
             self.game.event(self, f'fired at ({posx}, {posy})')
             self.earned_points += self.game.attack_pos(self, posx, posy)
 
+            # Antithetic variate: DAVID CODE
+            ax = -posx
+            ay = -posy
+            self.game.event(self, f'fired (antithetic) at ({ax}, {ay})')
+            self.earned_points += self.game.attack_pos(self, ax, ay)
+
     def resource_cost(self):
         return self.rate
 
@@ -214,6 +220,58 @@ class Helipad(Facility):
             h = Helicopter(id, posx, posy, self.game, self.alpha, 1, self)
             self.game.add_piece(h)
             self.game.event(self, f'spawned Helicopter {id} at ({posx}, {posy})', level=logging.INFO)
+
+class ReconPlane(Facility): #DAVID CODE
+    """
+    ReconPlane scans the map in horizontal bands (strata).
+    Each scan chooses the next band in a round-robin way and
+    destroys any targets in that band.
+    This demonstrates stratified sampling over the y-coordinate.
+    """
+    def __init__(self, id, resources, game, n_strata=4):
+        super().__init__(id, resources, game)
+        self._RESOURCE_MULTIPLIER = 0.01
+        self.rate = resources * self._RESOURCE_MULTIPLIER     
+        self.n_strata = n_strata        
+        self.current_stratum = 0        
+
+    def run(self):
+        """
+        Run the ReconPlane facility. Scans happen according to a Poisson process.
+        Each scan hits all targets in the selected horizontal band.
+        """
+       
+        while True:
+            next_t = np.random.exponential(1 / self.rate)
+            try:
+                yield self.env.timeout(next_t)
+            except simpy.Interrupt:
+                break
+
+            band_height = (2 * self.game.size) / self.n_strata
+            s = self.current_stratum
+            self.current_stratum = (self.current_stratum + 1) % self.n_strata
+
+            y_min = -self.game.size + s * band_height
+            y_max = y_min + band_height
+
+            scan_y = rand.randint(int(y_min), int(y_max) + 1)
+
+            self.game.event(
+                self,
+                f'scanned horizontal band around y={scan_y}',
+                level=logging.INFO
+            )
+
+            earned_here = 0
+            for p in self.game.pieces.values():
+                if getattr(p, "target", False) and p.active:
+                    if y_min <= p.posy <= y_max:
+                        p.hit(self)
+                        earned_here += p.points
+
+            self.earned_points += earned_here
+
             
 
 ############# GameEngine #############
@@ -368,6 +426,8 @@ artillery_resources = input("How many resources do you want to spend on artiller
 artillery_resources = int(artillery_resources)
 helipad_resources = input("How many resources do you want to spend on the helipad?\n> ")
 helipad_resources = int(helipad_resources)
+recon_resources = input("How many resources do you want to spend on the recon plane?\n> ") # DAVID CODE
+recon_resources = int(recon_resources) # DAVID CODE
 pieces = {}
 for i in range(100000, 100010):
     posx, posy = game.random_pos()
@@ -378,5 +438,6 @@ for i in range(100010, 100060):
 facilities = {}
 facilities[1] = Artillery(1, artillery_resources, game)
 facilities[2] = Helipad(2, helipad_resources, game, 0.5)
+facilities[3] = ReconPlane(3, recon_resources, game=game, n_strata=4) # DAVID CODE
 game.setup(pieces, facilities)
 game.run()
