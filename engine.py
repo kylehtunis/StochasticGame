@@ -230,10 +230,11 @@ class ReconPlane(Facility): #DAVID CODE
     """
     def __init__(self, id, resources, game, n_strata=4):
         super().__init__(id, resources, game)
-        self._RESOURCE_MULTIPLIER = 0.01
-        self.rate = resources * self._RESOURCE_MULTIPLIER     
-        self.n_strata = n_strata        
-        self.current_stratum = 0        
+        self._RESOURCE_MULTIPLIER = 0.02
+        self.rate = 1
+        self.sample_rate = resources * self._RESOURCE_MULTIPLIER
+        self.n_strata = n_strata
+        self.current_stratum = 0
 
     def run(self):
         """
@@ -248,7 +249,7 @@ class ReconPlane(Facility): #DAVID CODE
             except simpy.Interrupt:
                 break
 
-            band_height = (2 * self.game.size) / self.n_strata
+            band_height = int((2 * self.game.size) / self.n_strata)
             s = self.current_stratum
             self.current_stratum = (self.current_stratum + 1) % self.n_strata
 
@@ -259,18 +260,15 @@ class ReconPlane(Facility): #DAVID CODE
 
             self.game.event(
                 self,
-                f'scanned horizontal band around y={scan_y}',
+                f'began scanning horizontal band y={scan_y}',
                 level=logging.INFO
             )
 
-            earned_here = 0
-            for p in self.game.pieces.values():
-                if getattr(p, "target", False) and p.active:
-                    if y_min <= p.posy <= y_max:
-                        p.hit(self)
-                        earned_here += p.points
-
-            self.earned_points += earned_here
+            for i in range(-self.game.size, self.game.size + 1):
+                r = rand.uniform(0, 1)
+                if r < self.sample_rate:
+                    self.game.event(self, f'attacked ({i}, {scan_y})')
+                    self.earned_points += self.game.attack_pos(self, i, scan_y)
 
             
 
@@ -418,9 +416,9 @@ if len(sys.argv) > 1 and '-rt' in sys.argv:
     print("Realtime simulation enabled")
 
 difficulty = input("How difficult do you want the game to be, on a scale of 1 to 5?\n> ")
-difficulty = int(difficulty) * 20
-game = GameEngine(difficulty, 50, rt)
-facility_count = 2
+difficulty = int(difficulty)
+game = GameEngine(difficulty * 20, 50, rt)
+facility_count = 3
 print(f"You have {game.resource_limit} resources to spend, split between {facility_count} facilities.")
 artillery_resources = input("How many resources do you want to spend on artillery?\n> ")
 artillery_resources = int(artillery_resources)
@@ -438,6 +436,6 @@ for i in range(100010, 100060):
 facilities = {}
 facilities[1] = Artillery(1, artillery_resources, game)
 facilities[2] = Helipad(2, helipad_resources, game, 0.5)
-facilities[3] = ReconPlane(3, recon_resources, game=game, n_strata=4) # DAVID CODE
+facilities[3] = ReconPlane(3, recon_resources, game=game, n_strata=11-(5-difficulty)*2) # DAVID CODE
 game.setup(pieces, facilities)
 game.run()
