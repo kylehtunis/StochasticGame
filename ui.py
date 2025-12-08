@@ -7,12 +7,21 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer, Signal, QObject
 from PySide6.QtWidgets import QLabel
 import re
-from pieces import Helicopter
+from pieces import Helicopter, Target, RWTarget
 from facilities import Artillery, ReconPlane
 PLAYBACK_SPEED = 4.0
 ARTILLERY_COLOR = "#db3434"
 HELICOPTER_COLOR = "#2c3e50"
 RECON_PLANE_COLOR = "#775814"
+HIT_COLOR ="#25BB00"
+EFFECT_PRIORITY = {
+    "none": 0,
+    "helicopter": 1,
+    "recon": 1,
+    "artillery": 2,
+    "target_hit": 3,
+}
+
 
 class EventBridge(QObject):
     event_signal = Signal(object)
@@ -85,6 +94,7 @@ class GameViewer(QWidget):
                 cell.move(x*self.cell_size, y*self.cell_size)
                 row.append(cell)
             self.grid_cells.append(row)
+        self.cell_effects = {}
 
         # -------- Event log --------
         self.text_box = QTextEdit()
@@ -120,6 +130,7 @@ class GameViewer(QWidget):
 
         # Timer to periodically check queue
         self.timer = self.startTimer(50)  # 50 ms
+        self.targets_hit = 0
     
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -152,55 +163,71 @@ class GameViewer(QWidget):
             self.text_box.verticalScrollBar().setValue(
                 self.text_box.verticalScrollBar().maximum()
             )
-            self.status_label.setText(f"Simulation time: {event.time:.2f}")
+            self.status_label.setText(f"Time: {event.time:.2f}/100\nTargets hit: {self.targets_hit}")
+        
+        def _extract_and_clamp_coords(msg):
+            """
+            Extracts coordinates from the message attached to the event.
+            """
+            m = re.search(r"\((\-?\d+),\s*(\-?\d+)\)", msg)
+            if not m:
+                return None
+            x, y = int(m.group(1)), int(m.group(2))
+            gx = max(0, min(x + self.engine_size, self.grid_size - 1))
+            gy = max(0, min(y + self.engine_size, self.grid_size - 1))
+            return gx, gy
 
         if isinstance(event.piece, Artillery):
-            m = re.search(r"\((\-?\d+),\s*(\-?\d+)\)", event.msg)
-            if m:
-                x, y = int(m.group(1)), int(m.group(2))
-                gx = x + self.engine_size
-                gy = y + self.engine_size
-                gx = max(0, min(gx, self.grid_size - 1))
-                gy = max(0, min(gy, self.grid_size - 1))
-                self.grid_cells[gy][gx].setStyleSheet(f"background-color: {ARTILLERY_COLOR}; border: 1px solid gray;")
-                # Reset color after 0.25s (scaled by PLAYBACK_SPEED)
-                QTimer.singleShot(int(250/PLAYBACK_SPEED),
-                                  lambda gx=gx, gy=gy: self.grid_cells[gy][gx].setStyleSheet(
-                                      "background-color: white; border: 1px solid gray;"
-                                  ))
+            coords = _extract_and_clamp_coords(event.msg)
+            if coords:
+                gx, gy = coords
+                self.apply_cell_effect(
+                    gx, gy,
+                    "artillery",
+                    ARTILLERY_COLOR,
+                    int(1000 / PLAYBACK_SPEED)
+                )
         
-        if isinstance(event.piece, Helicopter):
-            m = re.search(r"\((\-?\d+),\s*(\-?\d+)\)", event.msg)
-            # Get grid coordinates
-            if m:
-                x, y = int(m.group(1)), int(m.group(2))
-                gx = x + self.engine_size
-                gy = y + self.engine_size
-                gx = max(0, min(gx, self.grid_size - 1))
-                gy = max(0, min(gy, self.grid_size - 1))
-                
+        elif isinstance(event.piece, Helicopter):
+            coords = _extract_and_clamp_coords(event.msg)
+            if coords:
+                gx, gy = coords
                 if event.piece.id in self.last_positions:
                     lx, ly = self.last_positions[event.piece.id]
-                    self.grid_cells[ly][lx].setStyleSheet("background-color: white; border: 1px solid gray;")
-                self.grid_cells[gy][gx].setStyleSheet(f"background-color: {HELICOPTER_COLOR}; border: 1px solid gray;")
+                    self.remove_cell_effect(lx, ly, "helicopter")
+                self.apply_cell_effect(
+                    gx, gy,
+                    "helicopter",
+                    HELICOPTER_COLOR
+                )
                 self.last_positions[event.piece.id] = (gx, gy)
 
-        if isinstance(event.piece, ReconPlane):
-            m = re.search(r"\((\-?\d+),\s*(\-?\d+)\)", event.msg)
-            if m:
-                x, y = int(m.group(1)), int(m.group(2))
-                gx = x + self.engine_size
-                gy = y + self.engine_size
-                gx = max(0, min(gx, self.grid_size - 1))
-                gy = max(0, min(gy, self.grid_size - 1))
-                self.grid_cells[gy][gx].setStyleSheet(f"background-color: {RECON_PLANE_COLOR}; border: 1px solid gray;")
-                # Reset color after 0.25s (scaled by PLAYBACK_SPEED)
-                QTimer.singleShot(int(1000/PLAYBACK_SPEED),
-                                  lambda gx=gx, gy=gy: self.grid_cells[gy][gx].setStyleSheet(
-                                      "background-color: white; border: 1px solid gray;"
-                                  ))
+        elif isinstance(event.piece, ReconPlane):
+            coords = _extract_and_clamp_coords(event.msg)
+            if coords:
+                gx, gy = coords
+                self.apply_cell_effect(
+                    gx, gy,
+                    "recon",
+                    RECON_PLANE_COLOR,
+                    int(1000 / PLAYBACK_SPEED)
+                )
         
-        if type(event) is EndGameEvent:
+        elif isinstance(event.piece, Target) or isinstance(event.piece, RWTarget):
+            if "destroyed by" in event.msg:
+                self.targets_hit += 1
+                x, y = event.piece.posx, event.piece.posy
+                gx = max(0, min(x + self.engine_size, self.grid_size - 1))
+                gy = max(0, min(y + self.engine_size, self.grid_size - 1))
+
+                self.apply_cell_effect(
+                    gx, gy,
+                    "target_hit",
+                    HIT_COLOR,
+                    int(3000 / PLAYBACK_SPEED)
+                )
+        
+        elif type(event) is EndGameEvent:
             overlay_text = f"Game ended! Points: {self.engine.points}/{self.engine.possible_points}\n"
             for f in self.engine.facilities.values():
                 if f.active():
@@ -209,6 +236,54 @@ class GameViewer(QWidget):
             self.overlay_label.setText(overlay_text)
             self.overlay_label.setVisible(True)
             self.overlay_label.raise_()
+
+    def apply_cell_effect(self, gx, gy, effect_name, color, duration_ms=None):
+        if (gx, gy) not in self.cell_effects:
+            self.cell_effects[(gx, gy)] = {"active": {}, "current": "none"}
+
+        effects = self.cell_effects[(gx, gy)]["active"]
+        effects[effect_name] = True
+
+        if EFFECT_PRIORITY[effect_name] >= EFFECT_PRIORITY.get(self.cell_effects[(gx, gy)]["current"], 0):
+            self.grid_cells[gy][gx].setStyleSheet(f"background-color: {color}; border: 1px solid gray;")
+            self.cell_effects[(gx, gy)]["current"] = effect_name
+
+        if duration_ms is not None:
+            QTimer.singleShot(
+                duration_ms,
+                lambda gx=gx, gy=gy, name=effect_name: self.remove_cell_effect(gx, gy, name)
+            )
+    
+    def remove_cell_effect(self, gx, gy, effect_name):
+        cell = self.cell_effects[(gx, gy)]
+        cell["active"][effect_name] = False
+
+        # Find highest remaining effect
+        remaining = [name for name, active in cell["active"].items() if active]
+
+        if not remaining:
+            # revert to white
+            self.grid_cells[gy][gx].setStyleSheet("background-color: white; border: 1px solid gray;")
+            cell["current"] = "none"
+            return
+
+        # Pick highest-priority effect
+        best = max(remaining, key=lambda n: EFFECT_PRIORITY[n])
+        cell["current"] = best
+
+        # Re-apply correct color
+        if best == "target_hit":
+            color = HIT_COLOR
+        elif best == "artillery":
+            color = ARTILLERY_COLOR
+        elif best == "helicopter":
+            color = HELICOPTER_COLOR
+        elif best == "recon":
+            color = RECON_PLANE_COLOR
+        else:
+            color = "white"
+
+        self.grid_cells[gy][gx].setStyleSheet(f"background-color: {color}; border: 1px solid gray;")
 
     def start_game(self, engine):
         """Run the simulation in a background thread."""

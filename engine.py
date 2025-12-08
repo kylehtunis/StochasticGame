@@ -116,6 +116,7 @@ class GameEngine:
                     break
             if not active_target:
                 log.info(f'[{self.env.now:.2f}] All targets destroyed, ending game')
+                ui.ui_event_bridge.push_event(ui.EndGameEvent(self))
                 for fg in self.facility_generators:
                     fg.interrupt()
                 for p in self.piece_generators:
@@ -182,17 +183,40 @@ if len(sys.argv) > 1 and '-rt' in sys.argv:
     rt = True
     print("Realtime simulation enabled")
 
-difficulty = input("How difficult do you want the game to be, on a scale of 1 to 5?\n> ")
+difficulty = input("How difficult do you want the game to be? Choose 1 for easy, 2 for hard.\n> ")
 difficulty = int(difficulty)
+while difficulty != 1 and difficulty != 2:
+    print("Invalid input, choose 1 or 2.")
+    difficulty = input("How difficult do you want the game to be? Choose 1 for easy, 2 for hard.\n> ")
+    difficulty = int(difficulty)
 game = GameEngine(difficulty * 20, 50, rt)
 facility_count = 3
 print(f"You have {game.resource_limit} resources to spend, split between {facility_count} facilities.")
 artillery_resources = input("How many resources do you want to spend on artillery?\n> ")
 artillery_resources = int(artillery_resources)
+while artillery_resources > 50:
+    print("Invalid input, exceeded 50.")
+    print(f"Resources left: 50.")
+    artillery_resources = input("How many resources do you want to spend on artillery?\n> ")
+    artillery_resources = int(artillery_resources)
+total = artillery_resources
+print(f"Resources left: {50 - total}.")
 helipad_resources = input("How many resources do you want to spend on the helipad?\n> ")
 helipad_resources = int(helipad_resources)
+while total + helipad_resources > 50:
+    print("Invalid input, exceeded 50.")
+    print(f"Resources left: {50 - total}.")
+    helipad_resources = input("How many resources do you want to spend on the helipad?\n> ")
+    helipad_resources = int(helipad_resources)
+total += helipad_resources
+print(f"Resources left: {50 - total}.")
 recon_resources = input("How many resources do you want to spend on the recon plane?\n> ") # DAVID CODE
 recon_resources = int(recon_resources) # DAVID CODE
+while total + recon_resources > 50:
+    print("Invalid input, exceeded 50.")
+    print(f"Resources left: {50 - total}.")
+    recon_resources = input("How many resources do you want to spend on the recon plane?\n> ")
+    recon_resources = int(recon_resources)
 pieces = {}
 for i in range(100000, 100010):
     posx, posy = game.random_pos()
