@@ -10,6 +10,7 @@ import pickle
 from pathlib import Path
 import sys
 from collections import Counter
+from scipy.stats import norm
 ARTILLERY_COLOR = "#db3434"
 HELICOPTER_COLOR = "#cdd331"
 RECON_PLANE_COLOR = "#1818C3"
@@ -330,18 +331,25 @@ def plot_score_distributions(results, path):
         "recon_only": RECON_PLANE_COLOR
     }
 
-    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10), sharex=True)
     fig.suptitle("Score Distributions per Weapon and Difficulty", fontsize=16)
 
     for i, difficulty in enumerate(difficulties):
         for j, weapon in enumerate(weapons):
             ax = axes[i, j]
             scores = results[(difficulty, weapon)]["scores"]
+            mean = results[(difficulty, weapon)]["mean"]
+            variance = results[(difficulty, weapon)]["variance"]
+            sd = np.sqrt(variance)
             ax.hist(scores, bins=30, color=colors[weapon], density=True)
+            x = np.linspace(scores.min(), scores.max(), 200)
+            y = norm.pdf(x, loc=mean, scale=sd)
+            ax.plot(x, y, 'k--', linewidth=2, label=f'Normal approx.\nμ={mean:.2f}, σ={sd:.2f}')
             ax.set_title(f"{weapon}, Difficulty {difficulty}")
             ax.set_xlabel("Score")
             ax.set_ylabel("Density")
             ax.grid(axis='y', linestyle='--', alpha=0.7)
+            ax.legend()
 
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
     plt.savefig(output_dir / "score_distributions_grid.png")
@@ -447,14 +455,14 @@ if __name__ == "__main__":
             print(f"Estimated mean score: {best_score:.2f}")
     else:
         # Single weapon runs
-        # results = load_results()
-        # plot_mean_scores(results, "sim_output/mean_score_bar.png")
-        # plot_score_distributions(results, "sim_output/score_distributions.png")
+        results = load_results()
+        plot_mean_scores(results, "sim_output")
+        plot_score_distributions(results, "sim_output")
 
         # Simulated Annealing difficulty 1
         # progress = load_results("sim_data/simulated_annealing_prog_d1.pkl")
         # plot_sa_trajectory(progress, "sim_output/sa_trajectory_d1.png")
 
         # Simulated Annealing difficulty 2
-        progress = load_results("sim_data/simulated_annealing_prog_d2.pkl")
-        plot_sa_trajectory(progress, "sim_output/sa_trajectory_d2.png")
+        # progress = load_results("sim_data/simulated_annealing_prog_d2.pkl")
+        # plot_sa_trajectory(progress, "sim_output/sa_trajectory_d2.png")
