@@ -18,6 +18,7 @@ class Facility:
         self.game = game
         self.env = game.env if game is not None else None
         self.earned_points = 0
+        self.sim = getattr(game, "simulation_mode", False)
 
     def run(self):
         raise NotImplementedError
@@ -26,7 +27,8 @@ class Facility:
         raise NotImplementedError
     
     def print_stats(self, log):
-        log.info(f'{type(self).__name__} {self.id} earned {self.earned_points} points ({self.earned_points/self.resources} per resource)')
+        if not self.sim:
+            log.info(f'{type(self).__name__} {self.id} earned {self.earned_points} points ({self.earned_points/self.resources} per resource)')
 
     def active(self):
         return self.resources > 0
@@ -54,7 +56,8 @@ class Artillery(Facility):
             # Antithetic variate: DAVID CODE
             ax = -posx
             ay = -posy
-            self.game.event(self, f'fired (antithetic) at ({ax}, {ay})')
+            if not self.sim:
+                self.game.event(self, f'fired (antithetic) at ({ax}, {ay})')
             self.earned_points += self.game.attack_pos(self, ax, ay)
 
     def resource_cost(self):
@@ -84,7 +87,8 @@ class Helipad(Facility):
             id = self.game.next_piece_id()
             h = Helicopter(id, posx, posy, self.game, self.alpha, 1, self)
             self.game.add_piece(h)
-            self.game.event(self, f'spawned Helicopter {id} at ({posx}, {posy})', level=logging.INFO)
+            if not self.sim:
+                self.game.event(self, f'spawned Helicopter {id} at ({posx}, {posy})', level=logging.INFO)
 
 class ReconPlane(Facility): #DAVID CODE
     """
@@ -123,11 +127,12 @@ class ReconPlane(Facility): #DAVID CODE
 
             scan_y = rand.randint(int(y_min), int(y_max) + 1)
 
-            self.game.event(
-                self,
-                f'began scanning horizontal band y={scan_y}',
-                level=logging.INFO
-            )
+            if not self.sim:
+                self.game.event(
+                    self,
+                    f'began scanning horizontal band y={scan_y}',
+                    level=logging.INFO
+                )
 
             for i in range(-self.game.size, self.game.size + 1):
                 r = rand.uniform(0, 1)

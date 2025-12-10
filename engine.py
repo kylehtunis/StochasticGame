@@ -8,10 +8,6 @@ from facilities import Helipad, Artillery, ReconPlane
 from pieces import RWTarget, Target
 
 loglevel = logging.INFO
-if len(sys.argv) > 1 and '-v' in sys.argv:
-    loglevel = logging.DEBUG
-    print("Verbose logging enabled")
-
 logging.basicConfig(level=loglevel, format='%(message)s')
 log = logging.getLogger('StochasticGame')
 
@@ -29,7 +25,8 @@ class Event:
         self.pieces = pieces
         self.object_type = type(self.piece).__name__
         output = f'[{self.time:.2f}]: {self.object_type} {self.piece.id} {self.msg}'
-        logger(output)
+        if logger:
+            logger(output)
     def __str__(self):
         return f"[{self.time:.2f}]: {self.object_type} {self.piece.id} {self.msg}"
     def __repr__(self):
@@ -43,7 +40,7 @@ class GameEngine:
     """
     GameEngine is the main class responsible for running the game. It is responsible for managing the event queue, scheduling generators, and running the simulation.
     """
-    def __init__(self, size=100, resource_limit=100, real_time=False):
+    def __init__(self, size=100, resource_limit=100, real_time=False, simulation_mode=False):
         self.env = simpy.rt.RealtimeEnvironment(strict=False) if real_time else simpy.Environment()
         self.event_queue = []
         self.size = size
@@ -53,7 +50,12 @@ class GameEngine:
         self.piece_generators = []
         self.facility_generators = []
         self.possible_points = 0
-        return
+        self.simulation_mode = simulation_mode
+        if self.simulation_mode:
+            # kill all logging from this namespace
+            log.handlers = []
+            log.addHandler(logging.NullHandler())
+            log.setLevel(logging.CRITICAL)
     
     def setup(self, pieces, facilities):
         """
@@ -88,7 +90,8 @@ class GameEngine:
         total_cost = sum(f.resources for f in self.facilities.values())
         if total_cost > self.resource_limit:
             raise ValueError(f'Total resource cost ({total_cost}) exceeds resource limit ({self.resource_limit})')
-        print(f'Resources used: {total_cost}/{self.resource_limit}')
+        if not self.simulation_mode:
+            print(f'Resources used: {total_cost}/{self.resource_limit}')
         for p in self.pieces:
             if hasattr(self.pieces[p], 'points'):
                 self.possible_points += self.pieces[p].points
@@ -96,10 +99,13 @@ class GameEngine:
             if self.facilities[f].active():
                 self.facility_generators.append(self.env.process(self.facilities[f].run()))
         self.env.process(self.endgame_check())
-        log.info(f'Game starting! Total possible points: {self.possible_points}')
+        if not self.simulation_mode:
+            log.info(f'Game starting! Total possible points: {self.possible_points}')
         self.env.run(until=100)
-        ui.ui_event_bridge.push_event(ui.EndGameEvent(self))
-        log.info(f'Game ended! Points: {self.points}/{self.possible_points}')
+        if not self.simulation_mode:
+            ui.ui_event_bridge.push_event(ui.EndGameEvent(self))
+        if not self.simulation_mode:
+            log.info(f'Game ended! Points: {self.points}/{self.possible_points}')
         for f in self.facilities.values():
             if f.active():
                 f.print_stats(log)
@@ -116,12 +122,19 @@ class GameEngine:
                     active_target = True
                     break
             if not active_target:
-                log.info(f'[{self.env.now:.2f}] All targets destroyed, ending game')
-                ui.ui_event_bridge.push_event(ui.EndGameEvent(self))
+                if not self.simulation_mode:
+                    log.info(f'[{self.env.now:.2f}] All targets destroyed, ending game')
+                    ui.ui_event_bridge.push_event(ui.EndGameEvent(self))
                 for fg in self.facility_generators:
-                    fg.interrupt()
+                    try:
+                        fg.interrupt()
+                    except RuntimeError:
+                        pass
                 for p in self.piece_generators:
-                    p.interrupt()
+                    try:
+                        p.interrupt()
+                    except RuntimeError:
+                        pass
                 break
 
     def piece_snapshot(self):
@@ -178,56 +191,63 @@ class GameEngine:
     
 
 ############# Main #############
+if __name__ == "__main__":
+    rt = False
+    simulation_mode = False
+    if len(sys.argv) > 1:
+        if '-rt' in sys.argv:
+            rt = True
+            print("Realtime simulation enabled")
+        if '-v' in sys.argv:
+            loglevel = logging.DEBUG
+            print("Verbose logging enabled")
 
-rt = False
-if len(sys.argv) > 1 and '-rt' in sys.argv:
-    rt = True
-    print("Realtime simulation enabled")
-
-difficulty = input("How difficult do you want the game to be? Choose 1 for easy, 2 for hard.\n> ")
-difficulty = int(difficulty)
-while difficulty != 1 and difficulty != 2:
-    print("Invalid input, choose 1 or 2.")
     difficulty = input("How difficult do you want the game to be? Choose 1 for easy, 2 for hard.\n> ")
     difficulty = int(difficulty)
-game = GameEngine(difficulty * 20, 50, rt)
-facility_count = 3
-print(f"You have {game.resource_limit} resources to spend, split between {facility_count} facilities.")
-artillery_resources = input("How many resources do you want to spend on artillery?\n> ")
-artillery_resources = int(artillery_resources)
-while artillery_resources > 50:
-    print("Invalid input, exceeded 50.")
-    print(f"Resources left: 50.")
+    while difficulty != 1 and difficulty != 2:
+        print("Invalid input, choose 1 or 2.")
+        difficulty = input("How difficult do you want the game to be? Choose 1 for easy, 2 for hard.\n> ")
+        difficulty = int(difficulty)
+    game = GameEngine(difficulty * 20, 50, rt)
+    facility_count = 3
+    print(f"You have {game.resource_limit} resources to spend, split between {facility_count} facilities.")
     artillery_resources = input("How many resources do you want to spend on artillery?\n> ")
     artillery_resources = int(artillery_resources)
-total = artillery_resources
-print(f"Resources left: {50 - total}.")
-helipad_resources = input("How many resources do you want to spend on the helipad?\n> ")
-helipad_resources = int(helipad_resources)
-while total + helipad_resources > 50:
-    print("Invalid input, exceeded 50.")
+    while artillery_resources > 50:
+        print("Invalid input, exceeded 50.")
+        print(f"Resources left: 50.")
+        artillery_resources = input("How many resources do you want to spend on artillery?\n> ")
+        artillery_resources = int(artillery_resources)
+    total = artillery_resources
     print(f"Resources left: {50 - total}.")
     helipad_resources = input("How many resources do you want to spend on the helipad?\n> ")
     helipad_resources = int(helipad_resources)
-total += helipad_resources
-print(f"Resources left: {50 - total}.")
-recon_resources = input("How many resources do you want to spend on the recon plane?\n> ") # DAVID CODE
-recon_resources = int(recon_resources) # DAVID CODE
-while total + recon_resources > 50:
-    print("Invalid input, exceeded 50.")
+    while total + helipad_resources > 50:
+        print("Invalid input, exceeded 50.")
+        print(f"Resources left: {50 - total}.")
+        helipad_resources = input("How many resources do you want to spend on the helipad?\n> ")
+        helipad_resources = int(helipad_resources)
+    total += helipad_resources
     print(f"Resources left: {50 - total}.")
-    recon_resources = input("How many resources do you want to spend on the recon plane?\n> ")
-    recon_resources = int(recon_resources)
-pieces = {}
-for speed, i in enumerate(range(100000, 100010)):
-    posx, posy = game.random_pos()
-    pieces[i] = RWTarget(i, posx, posy, game, 5, speed+1)
-for i in range(100010, 100060):
-    posx, posy = game.random_pos()
-    pieces[i] = Target(i, posx, posy, game, 1)
-facilities = {}
-facilities[1] = Artillery(1, artillery_resources, game)
-facilities[2] = Helipad(2, helipad_resources, game, 0.5)
-facilities[3] = ReconPlane(3, recon_resources, game=game, n_strata=11-(5-difficulty)*2) # DAVID CODE
-game.setup(pieces, facilities)
-ui.launch_gui(game)
+    recon_resources = input("How many resources do you want to spend on the recon plane?\n> ") # DAVID CODE
+    recon_resources = int(recon_resources) # DAVID CODE
+    while total + recon_resources > 50:
+        print("Invalid input, exceeded 50.")
+        print(f"Resources left: {50 - total}.")
+        recon_resources = input("How many resources do you want to spend on the recon plane?\n> ")
+        recon_resources = int(recon_resources)
+    save_gif = input("Save gif of game result? (y/n)\n> ")
+    save_gif = save_gif == "y"
+    pieces = {}
+    for speed, i in enumerate(range(100000, 100010)):
+        posx, posy = game.random_pos()
+        pieces[i] = RWTarget(i, posx, posy, game, 5, speed+1)
+    for i in range(100010, 100060):
+        posx, posy = game.random_pos()
+        pieces[i] = Target(i, posx, posy, game, 1)
+    facilities = {}
+    facilities[1] = Artillery(1, artillery_resources, game)
+    facilities[2] = Helipad(2, helipad_resources, game, 0.5)
+    facilities[3] = ReconPlane(3, recon_resources, game=game, n_strata=11-(5-difficulty)*2) # DAVID CODE
+    game.setup(pieces, facilities)
+    ui.launch_gui(game, save=save_gif)

@@ -6,6 +6,8 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QTimer, Signal, QObject
 from PySide6.QtWidgets import QLabel
+from PySide6.QtGui import QPixmap, QImage
+from PIL import Image
 import re
 from pieces import Helicopter, Target, RWTarget
 from facilities import Artillery, ReconPlane
@@ -61,13 +63,18 @@ class SimpleMessage:
 
 
 class GameViewer(QWidget):
-    def __init__(self, engine):
+    def __init__(self, engine, save=False):
         super().__init__()
         self.setWindowTitle("Stochastic Game — Real-Time Event Viewer")
         self.setGeometry(200, 200, 700, 700)
         self.setWindowFlag(Qt.WindowStaysOnTopHint, True)
         self.engine = engine
         self.engine_size = engine.size
+        self.save = save
+        if self.save:
+            self.capture_frames = []
+            self.capture_interval = 0.1
+            self.last_capture_time = time.time()
 
         layout = QVBoxLayout()
         self.status_label = QLabel("Waiting for game to begin...")
@@ -160,6 +167,42 @@ class GameViewer(QWidget):
         for e in to_display:
             self.display_event(e)
             self.event_queue.remove(e)
+        if self.save:
+            now = time.time()
+            if now - self.last_capture_time >= self.capture_interval:
+                self.capture_grid_frame()
+                self.last_capture_time = now
+
+    def capture_grid_frame(self):
+        """Capture the current grid_frame as a PIL Image (PySide6 compatible)."""
+        pixmap = QPixmap(self.grid_frame.size())
+        self.grid_frame.render(pixmap)
+
+        # Convert to RGBA format
+        qimage = pixmap.toImage().convertToFormat(QImage.Format_RGBA8888)
+
+        width = qimage.width()
+        height = qimage.height()
+        ptr = qimage.constBits()  # memoryview
+        arr = ptr.tobytes()        # convert memoryview -> bytes
+
+        img = Image.frombytes("RGBA", (width, height), arr)
+        self.capture_frames.append(img)
+
+    def save_gif(self, filename="grid_animation.gif", duration_ms=100):
+        """Save captured frames as an animated GIF."""
+        if not self.capture_frames:
+            print("No frames captured for GIF.")
+            return
+        self.capture_frames[0].save(
+            filename,
+            save_all=True,
+            append_images=self.capture_frames[1:],
+            duration=duration_ms,
+            loop=0
+        )
+        print(f"Saved GIF to {filename}")
+        self.save = False
 
     def display_event(self, event):
         """Append an event to the text box and update the grid if needed."""
@@ -250,6 +293,8 @@ class GameViewer(QWidget):
             self.overlay_label.setText(overlay_text)
             self.overlay_label.setVisible(True)
             self.overlay_label.raise_()
+            if self.save:
+                QTimer.singleShot(100, lambda: self.save_gif("sim_output/grid_animation.gif", duration_ms=100))
 
         # show active targets
         for p in self.engine.pieces.values():
@@ -335,13 +380,16 @@ class GameViewer(QWidget):
 
     def start_game(self, engine):
         """Run the simulation in a background thread."""
-        thread = threading.Thread(target=engine.run, daemon=True)
-        thread.start()
+        try:
+            thread = threading.Thread(target=engine.run, daemon=True)
+            thread.start()
+        except:
+            pass
 
 
-def launch_gui(engine):
+def launch_gui(engine, save=False):
     app = QApplication(sys.argv)
-    viewer = GameViewer(engine=engine)
+    viewer = GameViewer(engine=engine, save=save)
     viewer.show()
     viewer.start_game(engine)
     sys.exit(app.exec())

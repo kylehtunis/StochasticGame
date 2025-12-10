@@ -40,9 +40,10 @@ class Target(Piece):
         This function is called when the Target is hit by an attack.
         """
         self.active = False
-        self.game.event(self, f'destroyed by {type(attacker).__name__} {attacker.id}', level=logging.INFO)
         self.game.points += self.points
-        log.debug(f'[{self.game.env.now:.2f}]: {self.points} points gained, {self.game.points}/{self.game.possible_points} possible points earned')
+        if not self.game.simulation_mode:
+            self.game.event(self, f'destroyed by {type(attacker).__name__} {attacker.id}', level=logging.INFO)
+            log.debug(f'[{self.game.env.now:.2f}]: {self.points} points gained, {self.game.points}/{self.game.possible_points} possible points earned')
 
 class RWTarget(Target):
     """
@@ -76,7 +77,8 @@ class RWTarget(Target):
             if self.posx > self.game.size:
                 self.posx = -self.game.size
             self.posx, self.posy = self.game.wrap_pos(self.posx, self.posy)
-            self.game.event(self, f'moved to ({self.posx}, {self.posy})')
+            if not self.game.simulation_mode:
+                self.game.event(self, f'moved to ({self.posx}, {self.posy})')
 
 class Helicopter(Piece):
     """
@@ -105,5 +107,6 @@ class Helicopter(Piece):
             j_x = int(np.round(j_x_float))
             j_y = int(np.round(j_y_float))
             self.posx, self.posy = self.game.wrap_pos(self.posx + j_x, self.posy + j_y)
-            self.game.event(self, f'moved to ({self.posx}, {self.posy})')
+            if not self.game.simulation_mode:
+                self.game.event(self, f'moved to ({self.posx}, {self.posy})')
             self.parent.earned_points += self.game.attack_pos(self, self.posx, self.posy)
