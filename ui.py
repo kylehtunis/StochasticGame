@@ -182,6 +182,10 @@ class GameViewer(QWidget):
             gy = max(0, min(y + self.engine_size, self.grid_size - 1))
             return gx, gy
         
+        def _clamp_coords(pos):
+            x, y = pos
+            return max(0, min(x + self.engine_size, self.grid_size - 1)), max(0, min(y + self.engine_size, self.grid_size - 1))
+        
         if isinstance(event.piece, Artillery):
             coords = _extract_and_clamp_coords(event.msg)
             if coords:
@@ -221,9 +225,7 @@ class GameViewer(QWidget):
         elif isinstance(event.piece, Target) or isinstance(event.piece, RWTarget):
             if "destroyed by" in event.msg:
                 self.targets_hit += 1
-                x, y = event.piece.posx, event.piece.posy
-                gx = max(0, min(x + self.engine_size, self.grid_size - 1))
-                gy = max(0, min(y + self.engine_size, self.grid_size - 1))
+                gx, gy = _clamp_coords(event.piece.get_pos())
 
                 self.apply_cell_effect(
                     gx, gy,
@@ -252,34 +254,32 @@ class GameViewer(QWidget):
         # show active targets
         for p in self.engine.pieces.values():
             if p.active and p.target:
-                coords = p.get_pos()
-                if coords:
-                    gx, gy = coords
-                    piece_id = p.id
+                gx, gy = _clamp_coords(p.get_pos())
+                piece_id = p.id
                     
-                    if isinstance(p, RWTarget):
-                        # 1. Clear old position if moved (Only if still tracked)
-                        if piece_id in self.last_rw_target_positions:
-                            lx, ly = self.last_rw_target_positions[piece_id]
-                            if (lx, ly) != (gx, gy):
-                                self.remove_cell_effect(lx, ly, "rw_target") 
-                        
-                        # 2. Apply effect at new position (no duration)
-                        self.apply_cell_effect(
-                            gx, gy,
-                            "rw_target",
-                            RW_TARGET_COLOR
-                        )
-                        # 3. Track new position
-                        self.last_rw_target_positions[piece_id] = (gx, gy)
+                if isinstance(p, RWTarget):
+                    # 1. Clear old position if moved (Only if still tracked)
+                    if piece_id in self.last_rw_target_positions:
+                        lx, ly = self.last_rw_target_positions[piece_id]
+                        if (lx, ly) != (gx, gy):
+                            self.remove_cell_effect(lx, ly, "rw_target") 
+                    
+                    # 2. Apply effect at new position (no duration)
+                    self.apply_cell_effect(
+                        gx, gy,
+                        "rw_target",
+                        RW_TARGET_COLOR
+                    )
+                    # 3. Track new position
+                    self.last_rw_target_positions[piece_id] = (gx, gy)
 
-                    elif isinstance(p, Target):
-                        # Apply effect for static target (no duration)
-                        self.apply_cell_effect(
-                            gx, gy,
-                            "target",
-                            TARGET_COLOR
-                        )
+                elif isinstance(p, Target):
+                    # Apply effect for static target (no duration)
+                    self.apply_cell_effect(
+                        gx, gy,
+                        "target",
+                        TARGET_COLOR
+                    )
 
     def apply_cell_effect(self, gx, gy, effect_name, color, duration_ms=None):
         if (gx, gy) not in self.cell_effects:
