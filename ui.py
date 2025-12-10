@@ -11,15 +11,19 @@ from pieces import Helicopter, Target, RWTarget
 from facilities import Artillery, ReconPlane
 PLAYBACK_SPEED = 4.0
 ARTILLERY_COLOR = "#db3434"
-HELICOPTER_COLOR = "#2c3e50"
-RECON_PLANE_COLOR = "#775814"
+HELICOPTER_COLOR = "#cdd331"
+RECON_PLANE_COLOR = "#1818C3"
+TARGET_COLOR = "#000000"
+RW_TARGET_COLOR = "#666666"
 HIT_COLOR ="#25BB00"
 EFFECT_PRIORITY = {
     "none": 0,
-    "helicopter": 1,
-    "recon": 1,
-    "artillery": 2,
-    "target_hit": 3,
+    "target": 1,
+    "rw_target": 1,
+    "helicopter": 2,
+    "recon": 2,
+    "artillery": 3,
+    "target_hit": 4,
 }
 
 
@@ -81,7 +85,8 @@ class GameViewer(QWidget):
         grid_container.addWidget(self.grid_frame)
         grid_container.addStretch()
         layout.addLayout(grid_container)
-        self.last_positions = {}
+        self.last_helicopter_positions = {}
+        self.last_rw_target_positions = {}
 
         # Create cells
         self.grid_cells = []
@@ -176,7 +181,7 @@ class GameViewer(QWidget):
             gx = max(0, min(x + self.engine_size, self.grid_size - 1))
             gy = max(0, min(y + self.engine_size, self.grid_size - 1))
             return gx, gy
-
+        
         if isinstance(event.piece, Artillery):
             coords = _extract_and_clamp_coords(event.msg)
             if coords:
@@ -192,15 +197,15 @@ class GameViewer(QWidget):
             coords = _extract_and_clamp_coords(event.msg)
             if coords:
                 gx, gy = coords
-                if event.piece.id in self.last_positions:
-                    lx, ly = self.last_positions[event.piece.id]
+                if event.piece.id in self.last_helicopter_positions:
+                    lx, ly = self.last_helicopter_positions[event.piece.id]
                     self.remove_cell_effect(lx, ly, "helicopter")
                 self.apply_cell_effect(
                     gx, gy,
                     "helicopter",
                     HELICOPTER_COLOR
                 )
-                self.last_positions[event.piece.id] = (gx, gy)
+                self.last_helicopter_positions[event.piece.id] = (gx, gy)
 
         elif isinstance(event.piece, ReconPlane):
             coords = _extract_and_clamp_coords(event.msg)
@@ -226,6 +231,13 @@ class GameViewer(QWidget):
                     HIT_COLOR,
                     int(3000 / PLAYBACK_SPEED)
                 )
+                if isinstance(event.piece, RWTarget):
+                    # Also remove tracking for moving targets
+                    if event.piece.id in self.last_rw_target_positions:
+                        del self.last_rw_target_positions[event.piece.id]
+                    self.remove_cell_effect(gx, gy, "rw_target")
+                else:
+                    self.remove_cell_effect(gx, gy, "target")
         
         elif type(event) is EndGameEvent:
             overlay_text = f"Game ended! Points: {self.engine.points}/{self.engine.possible_points}\n"
@@ -236,6 +248,38 @@ class GameViewer(QWidget):
             self.overlay_label.setText(overlay_text)
             self.overlay_label.setVisible(True)
             self.overlay_label.raise_()
+
+        # show active targets
+        for p in self.engine.pieces.values():
+            if p.active and p.target:
+                coords = p.get_pos()
+                if coords:
+                    gx, gy = coords
+                    piece_id = p.id
+                    
+                    if isinstance(p, RWTarget):
+                        # 1. Clear old position if moved (Only if still tracked)
+                        if piece_id in self.last_rw_target_positions:
+                            lx, ly = self.last_rw_target_positions[piece_id]
+                            if (lx, ly) != (gx, gy):
+                                self.remove_cell_effect(lx, ly, "rw_target") 
+                        
+                        # 2. Apply effect at new position (no duration)
+                        self.apply_cell_effect(
+                            gx, gy,
+                            "rw_target",
+                            RW_TARGET_COLOR
+                        )
+                        # 3. Track new position
+                        self.last_rw_target_positions[piece_id] = (gx, gy)
+
+                    elif isinstance(p, Target):
+                        # Apply effect for static target (no duration)
+                        self.apply_cell_effect(
+                            gx, gy,
+                            "target",
+                            TARGET_COLOR
+                        )
 
     def apply_cell_effect(self, gx, gy, effect_name, color, duration_ms=None):
         if (gx, gy) not in self.cell_effects:
@@ -280,6 +324,10 @@ class GameViewer(QWidget):
             color = HELICOPTER_COLOR
         elif best == "recon":
             color = RECON_PLANE_COLOR
+        elif best == "rw_target":
+            color = RW_TARGET_COLOR
+        elif best == "target":
+            color = TARGET_COLOR
         else:
             color = "white"
 

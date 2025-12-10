@@ -50,6 +50,9 @@ class GameEngine:
         self.width = size * 2
         self.resource_limit = resource_limit
         self.next_piece = 1
+        self.piece_generators = []
+        self.facility_generators = []
+        self.possible_points = 0
         return
     
     def setup(self, pieces, facilities):
@@ -58,6 +61,9 @@ class GameEngine:
         """
         self.points = 0
         self.pieces = pieces
+        for p in self.pieces.values():
+            if p.runnable:
+                self.piece_generators.append(self.env.process(p.run()))
         self.facilities = facilities
         self.set_up = True
         return
@@ -78,17 +84,12 @@ class GameEngine:
         """
         if not self.set_up:
             raise RuntimeError("GameEngine.setup() must be called before GameEngine.run()")
-        self.piece_generators = []
-        self.facility_generators = []
-        self.possible_points = 0
         total_cost = 0
         total_cost = sum(f.resources for f in self.facilities.values())
         if total_cost > self.resource_limit:
             raise ValueError(f'Total resource cost ({total_cost}) exceeds resource limit ({self.resource_limit})')
         print(f'Resources used: {total_cost}/{self.resource_limit}')
         for p in self.pieces:
-            if self.pieces[p].runnable:
-                self.piece_generators.append(self.env.process(self.pieces[p].run()))
             if hasattr(self.pieces[p], 'points'):
                 self.possible_points += self.pieces[p].points
         for f in self.facilities:
@@ -218,9 +219,9 @@ while total + recon_resources > 50:
     recon_resources = input("How many resources do you want to spend on the recon plane?\n> ")
     recon_resources = int(recon_resources)
 pieces = {}
-for i in range(100000, 100010):
+for speed, i in enumerate(range(100000, 100010)):
     posx, posy = game.random_pos()
-    pieces[i] = RWTarget(i, posx, posy, game, 5, i+1)
+    pieces[i] = RWTarget(i, posx, posy, game, 5, speed+1)
 for i in range(100010, 100060):
     posx, posy = game.random_pos()
     pieces[i] = Target(i, posx, posy, game, 1)
